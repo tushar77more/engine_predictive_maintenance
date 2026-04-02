@@ -1,0 +1,99 @@
+name: Engine Predictive Maintenance Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  ml-pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+
+    # 1. Checkout Code
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    # 2. Setup Python
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    # 3. Install Dependencies
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install pandas numpy scikit-learn xgboost joblib huggingface_hub datasets
+
+    # 4. Data Registration
+    - name: Load & Register Data
+      env:
+        MLOps: ${{ secrets.HF_TOKEN }}
+      run: |
+        python model_building/data_register.py
+
+    # 5. Data Preprocessing
+    - name: Data Preprocessing
+      env:
+        MLOps: ${{ secrets.HF_TOKEN }}
+      run: |
+        python model_building/prep.py
+
+    # 6. Train Model
+    - name: Train Model
+      env:
+        MLOps: ${{ secrets.HF_TOKEN }}
+      run: |
+        python model_building/train.py
+
+    # 7. Evaluate Model
+    - name: Evaluate Model
+      env:
+        MLOps: ${{ secrets.HF_TOKEN }}
+      run: |
+        python model_building/evaluate.py
+
+    # 8. Save Model to Deployment Folder
+    - name: Save Model
+      run: |
+        mkdir -p deployment
+        cp model/GradientBoosting_best_model.pkl deployment/GradientBoosting_best_model.pkl
+
+    # 9. Upload Model Artifact
+    - name: Upload Model Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: trained-model
+        path: deployment/GradientBoosting_best_model.pkl
+
+    # 10. Push Model to Hugging Face
+    - name: Push model to Hugging Face
+      if: success()
+      env:
+        HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      run: |
+        pip install huggingface_hub
+        python -c "
+import os
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ['HF_TOKEN'])
+api.upload_file(
+    path_or_fileobj='deployment/GradientBoosting_best_model.pkl',
+    path_in_repo='GradientBoosting_best_model.pkl',
+    repo_id='tushar77more/engine_model',
+    repo_type='model'
+)
+print('Model pushed to Hugging Face!')
+"
+
+    # 11. Auto-commit and push updates back to main
+    - name: Commit and push updates
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add -A
+        git diff --staged --quiet || git commit -m "Auto-update: ML pipeline run completed"
+        git push
